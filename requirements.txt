@@ -1,0 +1,17 @@
+streamlit
+streamlit-extras
+langchain_core
+typing_extensions
+beautifulsoup4
+langchain_text_splitters
+langchain_community
+langgraph
+langchain_openai
+langchain_google_vertexai
+langchain_qdrant
+matplotlib
+qdrant_client
+playwright
+pandas
+pg8000
+cloud-sql-python-connector[pg8000]

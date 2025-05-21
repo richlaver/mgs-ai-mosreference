@@ -1,0 +1,155 @@
+ID,Article
+1,MissionOS Product Map
+2,Mission Monitor
+3,Mission Site
+4,Mission Designer
+5,Mission Builder
+6,Mission Project
+7,MissionOS Platform Architecture
+8,Getting a MissionOS Portal Instance
+9,Logging In and Edit Profile
+10,Online Assistance
+11,MGS Support
+12,Online Helpdesk
+13,Digitiser
+14,Distance Tool
+15,Legend
+17,Map Summary
+18,Tabs Layout
+19,Map Types
+20,Pins
+21,Save Elements to Canvas
+22,Save Map to Image
+23,Toggle Instrument Display
+24,Toggle Zoomboxes
+25,Zoom Pan
+26,Edit Instruments
+27,Send Messages to Users
+28,AAA Data
+29,Add To Canvas Sheet
+30,Data Download in CSV
+31,Data Selection
+32,Export To Image
+33,Graph Options
+34,Graph Thumbnail
+35,Hide-Show Graphs
+36,Print
+37,Web Reports
+38,Group Graphing
+208,GRP XS ELS - Create Group
+209,Viewing GRP XS ELS graph
+210,GRP XS ELS - Adding Progress Comments
+211,GRP XS ELS - Cross Section graph
+212,GRP XS ELS - Edit Graph details
+105,Customize
+150,Graphing - Y1 & Y2
+156,Graphs - AAA Lines
+157,Graph Types
+163,Consolidated Summary Report and Summary Table Generator
+159,Create Canvas Sheets
+160,Create Binder Reports
+232,New Reports - Graph Report
+233,New Reports - Individual Report
+234,New Reports - Summary Report
+39,Instrument Data Summaries
+40,Production Data Summaries
+41,Show Dashboard
+213,Blogs - General Issues tab
+214,Blogs - AAA tab
+215,AAA Blogs - Adding Comments and Documents
+199,AAA Blogs - Assigning Users
+200,Blog Reports
+55,Project
+54,Borehole Configuration
+50,Users
+51,User Groups
+46,User Permissions
+144,Instrument Status
+53,Maps
+45,Zoom Boxes
+44,Hierarchy
+49,Location
+47,Permissions
+52,Review Level Setup
+58,Notification Groups
+57,Module Configuration
+48,Responsibility
+56,Manual Notification
+194,User Response Definition
+195,Manage Subresponses
+196,Blog Post Closure
+197,Review Snapshot
+198,Review Report Format
+59,Archive Folders
+61,Report Scheduler
+60,Archived Reports
+63,IMR Report Configuration
+62,Canvas Directory
+42,Class Type
+43,Class
+113,Default Settings
+114,Audit Process
+115,Review Notification
+164,Type - Object Type Creation
+165,Model - Add Object Subtype
+166,Model - Delete Object Subtype
+167,Setting up Child Objects
+168,Setting up Parent Objects
+169,Model - Manage System Fields
+170,Model - Add Data Fields
+171,Model - Add Calibration Fields
+172,Model - Add Calculation Fields
+202,Model - Add Calculated Calibration Fields
+173,Graph - Graph Creation
+174,Graph - Graph Setup for Composite Instruments
+175,Table Template Creation - Normal Instruments
+176,Table Template Creation - Composite Instruments
+177,Summary Report Template Creation - Normal Instruments
+189,Summary Report Template Creation - Composite Instruments
+178,Create Composite Relationships
+179,Derived Instruments
+180,Loop Calculations
+201,Model - Manage Setup File
+181,Methods - Simple Moving Average
+182,Methods - Rate of Change
+193,Methods - Diff with Previous
+203,Derived Instruments - Controlling Child
+204,Compound Instruments - Processing Behaviour
+205,Revising Inclinometers
+237,Recalculations
+72,Instrument Setup
+117,Loading
+112,Display Groups
+76,Manage Group Reviews
+119,Load Data Files
+183,View Edit - Instrument Set Up
+184,View Edit - Instrument Calibration
+185,View Edit - Review Setup
+186,View Edit - Readings
+187,View Edit - Review History
+188,View Edit - Edit History
+121,Audit
+109,Setting Consecutive Readings before Notification Breach
+110,Elapsed Time Notifications
+111,Generic Reminder Notification System
+235,Add Review Settings functionality
+236,Auto Notification functionality
+238,Notification Options
+239,NULL Readings in Review Check functionality
+240,Reset After M Hours functionality
+132,User Logins
+133,Loader Configuration
+106,Source Configuration
+134,Cross section
+135,Contours
+136,3D
+138,Data Purge
+137,Manage AAA File
+139,Vector Setup
+140,Composite Master Reset
+142,User Log
+143,CSV Reports
+190,Datamanager Dashboard - Overview of Loader Notifications
+191,GDL Tabs - Loader Notifications
+192,Datamanager Dashboard - Auto File Recognition
+, 
