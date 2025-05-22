@@ -5,6 +5,8 @@ ensuring all components are ready for the RAG pipeline.
 """
 
 import os
+import psycopg2
+import json
 import subprocess
 import numpy as np
 import pandas as pd
@@ -24,6 +26,14 @@ import database
 QDRANT_INFO = {
     "client": QdrantClient(**st.secrets.qdrant_client_credentials),
     "collection_name": "manual-text",
+}
+
+# User mapping for display names
+users = {
+    "Ananthu": "ananthu-prakash",
+    "Rich": "rich-laver",
+    "Ronac": "ronac-esso",
+    "Sandeep": "sandeep-ts"
 }
 
 
@@ -50,7 +60,36 @@ def get_llm() -> ChatOpenAI:
     st.toast("Setting up the Gemini 2.0 Flash LLM...", icon=":material/build:")
     return ChatVertexAI(
         model="gemini-2.0-flash-001"
+        # model="gemini-2.5-pro-preview-05-06"        
     )
+
+
+def connect_to_threads_db():
+    credentials_json = st.secrets["AWS_CREDENTIALS_JSON"]
+    credentials = json.loads(credentials_json)
+    return psycopg2.connect(
+        host=credentials["DB_HOST"],
+        database=credentials["DB_NAME"],
+        user=credentials["DB_USER"],
+        password=credentials["DB_PASSWORD"],
+        port=credentials["DB_PORT"]
+    )
+
+
+def set_aws_credentials() -> None:
+    """Set AWS credentials for database access.
+
+    Writes credentials from secrets and sets environment variables.
+    """
+    st.toast("Setting AWS credentials...", icon=":material/build:")
+    credentials_json = st.secrets["AWS_CREDENTIALS_JSON"]
+    credentials = json.loads(credentials_json)
+    
+    os.environ["DB_HOST"] = credentials["DB_HOST"]
+    os.environ["DB_NAME"] = credentials["DB_NAME"]
+    os.environ["DB_USER"] = credentials["DB_USER"]
+    os.environ["DB_PASSWORD"] = credentials["DB_PASSWORD"]
+    os.environ["DB_PORT"] = credentials["DB_PORT"]
 
 
 def set_google_credentials() -> None:

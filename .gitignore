@@ -1,0 +1,7 @@
+/.streamlit/secrets.toml
+google_credentials.json
+**/*.log
+qdrant_points.csv
+retrieved_chunks.csv
+/__pycache__/
+/.devcontainer/

@@ -27,6 +27,9 @@ def main() -> None:
         layout="centered",
         initial_sidebar_state="expanded",
     )
+
+    # setup.set_aws_credentials()
+    # st.write(setup.connect_to_threads_db())
     
     # Initialize session state
     session.setup_session()

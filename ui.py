@@ -386,8 +386,7 @@ def test_modal():
         )
         if test_csv:
             st.session_state.test_csv = test_csv
-            st.rerun()  # Force rerender to update button state
-        if st.form_submit_button("Run Batch Test", disabled=not st.session_state.get("test_csv", False)):
+        if st.form_submit_button("Run Batch Test"):
             with st.spinner("Running batch test..."):
                 from setup import run_batch_test  # Import here to avoid circular import
                 progress_text = st.empty()
