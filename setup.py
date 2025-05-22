@@ -5,7 +5,7 @@ ensuring all components are ready for the RAG pipeline.
 """
 
 import os
-import psycopg2
+# import psycopg2
 import json
 import subprocess
 import numpy as np
@@ -64,16 +64,16 @@ def get_llm() -> ChatOpenAI:
     )
 
 
-def connect_to_threads_db():
-    credentials_json = st.secrets["AWS_CREDENTIALS_JSON"]
-    credentials = json.loads(credentials_json)
-    return psycopg2.connect(
-        host=credentials["DB_HOST"],
-        database=credentials["DB_NAME"],
-        user=credentials["DB_USER"],
-        password=credentials["DB_PASSWORD"],
-        port=credentials["DB_PORT"]
-    )
+# def connect_to_threads_db():
+#     credentials_json = st.secrets["AWS_CREDENTIALS_JSON"]
+#     credentials = json.loads(credentials_json)
+#     return psycopg2.connect(
+#         host=credentials["DB_HOST"],
+#         database=credentials["DB_NAME"],
+#         user=credentials["DB_USER"],
+#         password=credentials["DB_PASSWORD"],
+#         port=credentials["DB_PORT"]
+#     )
 
 
 def set_aws_credentials() -> None:
