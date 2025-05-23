@@ -259,7 +259,7 @@ def run_batch_test(test_csv, graph, vector_store):
 
     df = pd.read_csv(test_csv)
     grouped = df.groupby(['query_id', 'query_text'])
-    total_queries = len(grouped)
+    total_queries = len(grouped)-1
     results = []
     last_percent = -1
 

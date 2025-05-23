@@ -377,6 +377,7 @@ def user_modal():
 @st.dialog("Batch Testing")
 def test_modal():
     """Renders the batch testing modal using Streamlit dialog."""
+    results = []
     with st.form("batch_test_form", enter_to_submit=False):
         st.markdown("### Batch Testing")
         test_csv = st.file_uploader(
@@ -384,16 +385,14 @@ def test_modal():
             type="csv",
             disabled=not st.session_state.vector_store or not st.session_state.graph
         )
-        if test_csv:
-            st.session_state.test_csv = test_csv
         if st.form_submit_button("Run Batch Test"):
             with st.spinner("Running batch test..."):
                 from setup import run_batch_test  # Import here to avoid circular import
                 progress_text = st.empty()
                 
-                results = []
+                # results = []
                 for current_query, total_queries, batch_results in run_batch_test(
-                    st.session_state.test_csv,
+                    test_csv,
                     st.session_state.graph,
                     st.session_state.vector_store,
                 ):
@@ -403,13 +402,13 @@ def test_modal():
                 progress_text.empty()
                 st.toast("Batch test completed.", icon=":material/check_circle:")
                 st.success("Batch test completed.")
-        if st.session_state.get("results_csv", False):
-            st.download_button(
-                label="Download Results CSV",
-                data=st.session_state.results_csv,
-                file_name="test_results.csv",
-                mime="text/csv"
-            )
+    if results:
+        st.download_button(
+            label="Download Results CSV",
+            data=pd.DataFrame(results).to_csv(index=False).encode('utf-8'),
+            file_name="test_results.csv",
+            mime="text/csv"
+        )
 
 
 @st.dialog("Database Parameters")
