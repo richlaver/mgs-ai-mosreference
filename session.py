@@ -6,6 +6,8 @@ across the application for configuration, conversation history, and multimedia.
 
 import streamlit as st
 import logging
+import database
+import uuid
 
 # Configure logging
 logging.basicConfig(
@@ -17,7 +19,6 @@ logger = logging.getLogger(__name__)
 
 def setup_session() -> None:
     """Initializes Streamlit session state variables with default values."""
-    logger.info("Setting up session state")
     # Initialize core components
     if "llm" not in st.session_state:
         st.session_state.llm = False
@@ -30,7 +31,7 @@ def setup_session() -> None:
 
     # Initialize conversation and multimedia
     if "thread_id" not in st.session_state:
-        st.session_state.thread_id = 0
+        st.session_state.thread_id = str(uuid.uuid4())
     if "messages" not in st.session_state:
         st.session_state.messages = []
     if "webpage_urls" not in st.session_state:
@@ -53,3 +54,9 @@ def setup_session() -> None:
         st.session_state.admin_logged_in = False
     if "new_message_added" not in st.session_state:
         st.session_state.new_message_added = False
+    if "user_id_mapping" not in st.session_state:
+        st.session_state.user_id_mapping = database.generate_user_id_mapping()
+    if "selected_user_id" not in st.session_state:
+        st.session_state.selected_user_id = None
+    if "persistence_setup_complete" not in st.session_state:
+        st.session_state.persistence_setup_complete = False

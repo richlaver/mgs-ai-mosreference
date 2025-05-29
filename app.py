@@ -8,6 +8,7 @@ import streamlit as st
 import rag
 import session
 import setup
+import database
 import ui
 import logging
 
@@ -27,12 +28,13 @@ def main() -> None:
         layout="centered",
         initial_sidebar_state="expanded",
     )
-
-    # setup.set_aws_credentials()
-    # st.write(setup.connect_to_threads_db())
     
     # Initialize session state
     session.setup_session()
+
+    # Prompt for user to log in
+    if st.session_state.selected_user_id is None:
+        ui.select_user()
 
     # Render initial UI (sidebar, app title, popover, disabled chat input)
     ui.render_initial_ui()

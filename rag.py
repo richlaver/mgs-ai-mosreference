@@ -8,10 +8,10 @@ import base64
 import csv
 import logging
 import re
-from typing import List, Tuple
+from typing import Tuple, Generator
 
 import streamlit as st
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from langchain_core.tools import tool
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langgraph.checkpoint.memory import MemorySaver
@@ -29,6 +29,32 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
+
+
+def generate_thread_title(query: str, response: str, llm) -> str:
+    """
+    Generate a unique thread title using an LLM.
+    Title is max 40 chars and descriptive.
+
+    Args:
+        query: User query string.
+        response: LLM response string.
+        llm: Language model instance.
+
+    Returns:
+        Thread title string.
+    """
+    prompt = ChatPromptTemplate.from_template(
+        "Generate a single, descriptive title (max 35 chars) for a chat thread "
+        "based on this query: '{query}' and response: '{response}'. "
+        "Focus on the most relevant key concepts, use concise language, "
+        "and avoid introductory phrases like 'Here are' or 'Options'. "
+        "Return only the title."
+        "Omit mentioning MissionOS or Maxwell GeoSystems in the title."
+    )
+    chain = prompt | llm
+    result = chain.invoke({"query": query[:100], "response": response[:100]})
+    return result.content[:40].strip()
 
 
 def build_graph(llm, vector_store, k) -> StateGraph:
@@ -73,7 +99,7 @@ def build_graph(llm, vector_store, k) -> StateGraph:
         videos = [{"url": url, "title": title} for url, title in videos_set]
         start_image_fetch = time.time()
         images = []
-        with database.getconn() as conn:
+        with database.connect_to_images_db() as conn:
             cursor = conn.cursor()
             try:
                 if image_ids:
@@ -102,12 +128,12 @@ def build_graph(llm, vector_store, k) -> StateGraph:
             "docs": retrieved_docs,
             "images": images,
             "videos": videos,
-            "timings": {"search_time": search_time, "image_fetch_time": image_fetch_time},
+            "timings": {"search": search_time, "image_fetch": image_fetch_time},
         }
         return serialized_docs, artifact
     
 
-    def query_or_respond(state: State) -> dict:
+    def query_or_respond(state: State, config: dict) -> dict:
         """Decides whether to query tools or respond directly.
 
         Args:
@@ -117,12 +143,15 @@ def build_graph(llm, vector_store, k) -> StateGraph:
             Updated state with new messages and timings.
         """
         start_time = time.time()
+        thread_id = config["configurable"]["thread_id"]
+        user_id = config["configurable"]["user_id"]
         prompt = ChatPromptTemplate.from_messages([
             (
                 "system",
                 (
-                    "You are an assistant for MissionOS. Use the 'retrieve' tool for "
-                    "info-seeking queries about MissionOS. For other requests, respond directly."
+                    "You are a polite and helpful assistant for MissionOS."
+                    "Use the retrieve tool to fetch relevant information to answer the query."
+                    "If the query is ambiguous, assume it relates to MissionOS and use the tool."
                 ),
             ),
             MessagesPlaceholder(variable_name="history"),
@@ -132,12 +161,41 @@ def build_graph(llm, vector_store, k) -> StateGraph:
         chain = prompt | llm_with_tools
         response = chain.invoke(
             {"history": state["messages"], "query": state["messages"][-1].content},
-            config={"configurable": {"thread_id": f"{st.session_state.thread_id}"}},
+            config={"configurable": {"thread_id": thread_id}},
         )
         response_time = time.time() - start_time
+
+        database.add_thread_to_db(
+            thread_id=thread_id,
+            user_id=user_id,
+            title=generate_thread_title(
+                query=state["messages"][-1].content,
+                response=response.content,
+                llm=llm
+            ),
+        )
+        query_message_id = database.add_message_to_db(
+            thread_id=thread_id,
+            user_id=user_id,
+            content=state["messages"][-1].content,
+            is_ai=False
+        )
+        state["messages"][-1].additional_kwargs["message_id"] = query_message_id
+
+        has_tool_calls = (hasattr(response, "tool_calls") and bool(response.tool_calls)) or \
+                     (hasattr(response, "invalid_tool_calls") and bool(response.invalid_tool_calls))
+        if not has_tool_calls:
+            response_message_id = database.add_message_to_db(
+                thread_id=thread_id,
+                user_id=user_id,
+                content=response.content,
+                is_ai=True
+            )
+            response.additional_kwargs["message_id"] = response_message_id
+
         new_state = state.copy()
         new_state["messages"].append(response)
-        new_state["timings"].append({"node": "query_or_respond", "time": response_time, "component": "LLM decision"})
+        new_state["timings"].append({"node": "query_or_respond", "time": response_time, "component": "llm_decision"})
         return new_state
     
 
@@ -155,7 +213,7 @@ def build_graph(llm, vector_store, k) -> StateGraph:
         updated_state = state.copy()
         updated_state["messages"].extend(tool_result["messages"])
         tool_time = time.time() - start_time
-        updated_state["timings"].append({"node": "tools", "time": tool_time, "component": "Tool execution"})
+        updated_state["timings"].append({"node": "tools", "time": tool_time, "component": "tool_execution"})
         return updated_state
     
 
@@ -172,16 +230,18 @@ def build_graph(llm, vector_store, k) -> StateGraph:
         return "tools" if hasattr(last_message, "tool_calls") and last_message.tool_calls else END
     
 
-    def generate(state: State) -> dict:
+    def generate(state: State, config: dict) -> Generator[State, None, None]:
         """Generates a response using retrieved context and multimedia.
 
         Args:
             state: Current state with messages and metadata.
 
         Returns:
-            Updated state with response and multimedia.
+            Generator yielding updated states with response and multimedia.
         """
         start_time = time.time()
+        thread_id = config["configurable"]["thread_id"]
+        user_id = config["configurable"]["user_id"]
         query = next((msg.content for msg in reversed(state["messages"]) if isinstance(msg, HumanMessage)), "unknown")
         tool_messages = [msg for msg in reversed(state["messages"]) if msg.type == "tool"][::-1]
         csv_file = "retrieved_chunks.csv"
@@ -230,28 +290,26 @@ def build_graph(llm, vector_store, k) -> StateGraph:
                 videos.extend(msg.artifact.get("videos", []))
 
         system_message_content = (
-            "You are a polite and helpful assistant providing information on MissionOS "
-            "to users of MissionOS. The user's query is provided "
-            "in the messages that follow this instruction. Use the following pieces "
-            "of retrieved context, images, and videos to provide information that is "
-            "directly relevant to the user's request. Respond using simple language "
-            "that is easy to understand. The image captions provide clues how you can "
-            "reference the images in your response. The video titles provide clues how "
-            "you can reference the videos in your response. Treat the user as if all "
-            "he or she knows about MissionOS is that it is a construction and "
-            "instrumentation data platform. Provide options for further requests for "
-            "information. Start each response with an overview of the topic raised in "
-            "the question. The overview should introduce the topic and its context. "
-            "Order your response in a logical way and use bullet points or numbered "
-            "lists where appropriate. If the user asks a question that is definitely "
-            "not related to MissionOS, provide a polite response indicating that you "
-            "cannot assist. If an image is relevant, reference it using [Image N] "
-            "(e.g., [Image 1], [Image 2]) at the end of a sentence or logical break, "
-            "ensuring the reference enhances the explanation without disrupting "
-            "sentence flow. Do not place [Image N] mid-sentence unless absolutely "
-            "necessary, and avoid trailing punctuation (e.g., '.', ',') after "
-            "[Image N]. Number images sequentially based on their order (1 for first, "
-            "2 for second, etc.). If you don't know the answer, say so clearly.\n\n"
+            "You are a polite and helpful assistant providing information to MissionOS users. "
+            "The user's query is provided in the messages that follow this instruction. "
+            "Use the following pieces of retrieved context, images, and videos to provide information directly relevant to the user's request. "
+            "Respond using simple language that is easy to understand. "
+            "All that the user knows about MissionOS is that it is a construction and instrumentation data platform. "
+            "Provide options for further information requests. "
+            "Start responses with an overview and context of the queried topic. "
+            "Order your response in a logical way and use bullet points or numbered lists where appropriate. "
+            "For questions definitely not related to MissionOS, politely respond that you cannot assist. "
+            "The image and video captions provide clues how you can reference images and videos in your response. "
+            "Assign a unique image number to each image you reference in your response. "
+            "Image numbers start from 1 and are sequentially numbered based on their order of insertion. "
+            "Reference images naturally in the response, e.g. 'See Image 1 below for details.', '...as shown in Image 2', 'Image 3 illustrates that...' "
+            "A placeholder marks where an image will be rendered. "
+            "An image will only be rendered once in the response, even if referenced multiple times, and therefore there will only be one placeholder per image. "
+            "Placeholders are enclosed in curved brackets like (Image 1), (Image 2), etc. "
+            "Insert each placeholder on a new line, one placeholder for one line. "
+            "Ensure placeholder insertion enhances explanation without disrupting flow of reading. "
+            "Avoid trailing punctuation after placeholders. "
+            "If you don't know the answer, say so clearly.\n\n"
             f"Context:\n{retrieved_content}\n\n"
             f"Available images: {len(images)} image(s)\n"
             f"Available videos: {len(videos)} video(s)"
@@ -261,18 +319,33 @@ def build_graph(llm, vector_store, k) -> StateGraph:
             message for message in state["messages"] if message.type in ("human", "system") or (message.type == "ai" and not message.tool_calls)
         ]
         prompt = [SystemMessage(content=system_message_content)] + conversation_messages
-        response = llm.invoke(prompt, config={"configurable": {"thread_id": f"{st.session_state.thread_id}"}})
-        response.additional_kwargs["images"] = images
-        response.additional_kwargs["videos"] = videos
-        generate_time = time.time() - start_time
 
-        new_state = state.copy()
-        new_state["messages"].append(response)
-        new_state["images"] = images
-        new_state["videos"] = videos
-        new_state["timings"].extend(
-            [
-                {"node": "generate", "time": generate_time, "component": "LLM generation"},
+        accumulated_content = ""
+        for chunk in llm.stream(prompt, config={"configurable": {"thread_id": thread_id}}):
+            new_state = state.copy()
+            new_state["messages"] = new_state["messages"] + [AIMessage(
+                content=chunk.content,
+                additional_kwargs={}
+            )]
+            accumulated_content += chunk.content
+            yield new_state
+
+        generate_time = time.time() - start_time
+        final_response = AIMessage(
+            content=accumulated_content,
+            additional_kwargs={"images": images, "videos": videos}
+        )
+        response_message_id = database.add_message_to_db(
+            thread_id=thread_id,
+            user_id=user_id,
+            content=accumulated_content,
+            is_ai=True
+        )
+        final_response.additional_kwargs["message_id"] = response_message_id
+        database.add_message_timings_to_db(
+            message_id=response_message_id,
+            timings=[
+                {"node": "generate", "time": generate_time, "component": "llm_generation"},
                 *[
                     {"node": "retrieve", "time": time_val, "component": component}
                     for component, time_val in (
@@ -283,7 +356,25 @@ def build_graph(llm, vector_store, k) -> StateGraph:
                 ],
             ]
         )
-        return new_state
+
+        new_state = state.copy()
+        new_state["messages"] = new_state["messages"] + [final_response]
+        new_state["images"] = images
+        new_state["videos"] = videos
+        new_state["timings"].extend(
+            [
+                {"node": "generate", "time": generate_time, "component": "llm_generation"},
+                *[
+                    {"node": "retrieve", "time": time_val, "component": component}
+                    for component, time_val in (
+                        tool_messages[-1].artifact.get("timings", {})
+                        if tool_messages and hasattr(tool_messages[-1], "artifact") and tool_messages[-1].artifact
+                        else {}
+                    ).items()
+                ],
+            ]
+        )
+        yield new_state
     
 
     # Initialize the graph
