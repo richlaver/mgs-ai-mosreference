@@ -4,11 +4,13 @@ This module handles PostgreSQL connections, image storage, and scraping of Missi
 manual webpages to extract text, images, and videos.
 """
 
+import setup
 import base64
 import json
 import logging
 import os
-from typing import List
+import psycopg2
+from typing import List, Optional
 from urllib.parse import parse_qs, urljoin, urlparse
 
 import pandas as pd
@@ -21,6 +23,7 @@ from langchain_community.document_loaders import AsyncChromiumLoader
 from langchain_core.documents import Document
 from langchain_text_splitters import HTMLSemanticPreservingSplitter
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_core.messages import AIMessage, HumanMessage
 
 
 # Configure logging for database and scraping events
@@ -35,7 +38,292 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def getconn():
+def connect_to_conversations_db():
+    credentials_json = st.secrets["AWS_CREDENTIALS_JSON"]
+    credentials = json.loads(credentials_json)
+    return psycopg2.connect(
+        host=credentials["DB_HOST"],
+        database=credentials["DB_NAME"],
+        user=credentials["DB_USER"],
+        password=credentials["DB_PASSWORD"],
+        port=credentials["DB_PORT"]
+    )
+
+
+def create_persistence_tables():
+    """Recreate the users, threads and messages tables in the database."""
+    conn = connect_to_conversations_db()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("DROP TABLE IF EXISTS message_timings CASCADE;")
+            cursor.execute("DROP TABLE IF EXISTS messages CASCADE;")
+            cursor.execute("DROP TABLE IF EXISTS threads CASCADE;")
+            cursor.execute("DROP TABLE IF EXISTS users CASCADE;")
+            cursor.execute("""
+                CREATE TABLE users (
+                    id SERIAL PRIMARY KEY,
+                    username VARCHAR(255)
+                );
+            """)
+            cursor.execute("""
+                CREATE TABLE threads (
+                    id UUID PRIMARY KEY,
+                    user_id INTEGER REFERENCES users(id),
+                    title VARCHAR(255),
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    is_archived BOOLEAN DEFAULT FALSE
+                );
+            """)
+            cursor.execute("""
+                CREATE TABLE messages (
+                    id SERIAL PRIMARY KEY,
+                    thread_id UUID REFERENCES threads(id),
+                    user_id INTEGER REFERENCES users(id),
+                    content TEXT,
+                    is_ai BOOLEAN,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    feedback INTEGER  -- -1 for thumbs-down, 1 for thumbs-up, 0 or NULL for no feedback
+                );
+            """)
+            cursor.execute("""
+                CREATE TABLE message_timings (
+                    id SERIAL PRIMARY KEY,
+                    message_id INTEGER REFERENCES messages(id) ON DELETE CASCADE,
+                    timing_key VARCHAR(255) NOT NULL,
+                    timing_value FLOAT NOT NULL
+                );
+            """)
+            cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_thread_id ON messages (thread_id);
+                """)
+            st.toast("Thread persistence tables recreated successfully.", icon=":material/database:")
+    finally:
+        conn.commit()
+        conn.close()
+
+
+def populate_users_table():
+    """Populates the users table with usernames from the database."""
+    conn = connect_to_conversations_db()
+    try:
+        with conn.cursor() as cursor:
+            for user_id, username in setup.users.items():
+                cursor.execute(
+                    """
+                    INSERT INTO users (id, username)
+                    VALUES (%s, %s)
+                    ON CONFLICT (id) DO UPDATE SET username = EXCLUDED.username;
+                    """,
+                    (user_id, username)
+                )
+        st.toast("Users table populated successfully.", icon=":material/database:")
+    finally:
+        conn.commit()
+        conn.close()
+
+
+def generate_user_id_mapping():
+    """Generates a mapping of usernames to user IDs from the database.
+
+    Returns:
+        Dictionary mapping usernames to user IDs.
+    """
+    conn = connect_to_conversations_db()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT id, username FROM users;")
+            users = cursor.fetchall()
+            return {user[1]: user[0] for user in users}
+    finally:
+        conn.close()
+
+
+def get_user_threads(user_id: int) -> list:
+    conn = connect_to_conversations_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT id, title, created_at
+        FROM threads
+        WHERE user_id = %s AND is_archived = FALSE
+        ORDER BY updated_at DESC
+    """, (user_id,))
+    threads = [{"id": str(row[0]), "title": row[1], "created_at": row[2]} for row in cursor.fetchall()]
+    cursor.close()
+    conn.close()
+    return threads
+
+
+def get_thread_messages(thread_id: str, user_id: int) -> list:
+    conn = connect_to_conversations_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT id, content, is_ai, feedback
+        FROM messages
+        WHERE thread_id = %s AND user_id = %s
+        ORDER BY created_at ASC
+    """, (thread_id, user_id))
+    messages = [
+        AIMessage(content=row[1], additional_kwargs={"feedback": row[3] or 0, "message_id": row[0]}) if row[2]
+        else HumanMessage(content=row[1], additional_kwargs={"message_id": row[0]})
+        for row in cursor.fetchall()
+    ]
+    cursor.close()
+    conn.close()
+    return messages
+
+
+def delete_thread(thread_id: str, user_id: int):
+    conn = connect_to_conversations_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            UPDATE threads
+            SET is_archived = TRUE
+            WHERE id = %s AND user_id = %s
+        """, (thread_id, user_id))
+        conn.commit()
+    finally:
+        cursor.close()
+        conn.close()
+        
+
+def add_thread_to_db(thread_id: str, user_id: int, title: str):
+    """Adds a thread to the threads table using a UUID thread_id as the primary key.
+
+    Args:
+        thread_id: UUID string to use as the primary key (id).
+        user_id: ID of the user creating the thread.
+        title: Title of the thread.
+    """
+
+    conn = None
+    try:
+        conn = connect_to_conversations_db()
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO threads (id, user_id, title)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (id) DO NOTHING
+                RETURNING id;
+                """,
+                (thread_id, user_id, title)
+            )
+            result = cursor.fetchone()
+            if result:
+                conn.commit()
+            else:
+                conn.rollback()
+    finally:
+        if conn:
+            conn.close()
+
+
+def add_message_to_db(
+    thread_id: int,
+    user_id: int,
+    content: str,
+    is_ai: bool,
+    feedback: Optional[int] = None
+) -> Optional[int]:
+    """Adds a message to the database.
+
+    Args:
+        thread_id: ID of the thread to which the message belongs.
+        user_id: ID of the user sending the message.
+        content: Content of the message.
+        is_ai: Boolean indicating if the message is from a bot.
+        feedback: Feedback value for the message (-1, 0, 1, or None).
+
+    Returns:
+        Optional[int]: The generated message_id if successful, None otherwise.
+    """
+
+    message_id = None
+    conn = None
+    try:
+        conn = connect_to_conversations_db()
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO messages (thread_id, user_id, content, is_ai, feedback)
+                VALUES (%s, %s, %s, %s, %s)
+                RETURNING id;
+                """,
+                (thread_id, user_id, content, is_ai, feedback)
+            )
+            result = cursor.fetchone()
+            if result:
+                message_id = result[0]
+            else:
+                return None
+        conn.commit()
+    finally:
+        if conn:
+            conn.close()
+
+    return message_id
+
+
+def update_message_feedback(message_id: int, feedback: int) -> None:
+    """Updates the feedback value for a specific message in the database.
+
+    Args:
+        message_id: ID of the message to update.
+        feedback: Feedback value (-1 for thumbs-down, 1 for thumbs-up, 0 for no feedback).
+    """
+    conn = None
+    try:
+        conn = connect_to_conversations_db()
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE messages
+                SET feedback = %s
+                WHERE id = %s;
+                """,
+                (feedback, message_id)
+            )
+        conn.commit()
+    finally:
+        if conn:
+            conn.close()
+
+
+def add_message_timings_to_db(
+    message_id: int,
+    timings: List[dict],
+) -> None:
+    """Adds message timings to the database.
+
+    Args:        
+        message_id: The ID of the message to associate timings with.
+        timings: List of dictionaries, each with 'component' (str) and 'time' (float).
+            Example: [{"node": "generate", "time": 0.5, "component": "llm_generation"}, ...]
+    """
+    conn = None
+    try:
+        conn = connect_to_conversations_db()
+        with conn.cursor() as cursor:
+            for timing in timings:
+                timing_key = timing.get('component')
+                timing_value = timing.get('time')
+                if not isinstance(timing_value, (int, float)) or timing_value < 0:
+                    continue
+                cursor.execute(
+                    """
+                    INSERT INTO message_timings (message_id, timing_key, timing_value)
+                    VALUES (%s, %s, %s);
+                    """,
+                    (message_id, timing_key, float(timing_value))
+                )
+    finally:
+        conn.commit()
+        conn.close()
+
+
+def connect_to_images_db():
     """Establishes a connection to the PostgreSQL database using Google Cloud SQL.
 
     Returns:
@@ -64,7 +352,7 @@ def query_db() -> str:
     """
     conn = None
     try:
-        conn = getconn()
+        conn = connect_to_images_db()
         cursor = conn.cursor()
         cursor.execute("SELECT version();")
         result = cursor.fetchone()
@@ -78,7 +366,7 @@ def query_db() -> str:
 
 def create_images_table() -> None:
     """Creates or recreates the images table in the database."""
-    conn = getconn()
+    conn = connect_to_images_db()
     cursor = conn.cursor()
     try:
         cursor.execute("DROP TABLE IF EXISTS images;")
@@ -174,7 +462,7 @@ def web_scrape(use_cache: bool = True, cache_dir: str = "scrape_cache") -> List[
         save_cached_docs(docs, cache_dir)
 
     st.toast("Processing webpages...", icon=":material/build:")
-    conn = getconn()
+    conn = connect_to_images_db()
     cursor = conn.cursor()
     try:
         last_percent = -1
