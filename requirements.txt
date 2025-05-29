@@ -14,5 +14,5 @@ qdrant_client
 playwright
 pandas
 pg8000
-psycopg2
+psycopg2-binary
 cloud-sql-python-connector[pg8000]
