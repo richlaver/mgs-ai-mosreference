@@ -237,6 +237,52 @@ def render_chat_content() -> None:
     """Renders chat messages, history, and enabled chat input after setup is complete."""
     if not st.session_state.get("setup_complete", False):
         return
+    
+    def render_message_content(content, images, image_map=None):
+        """Helper to render message content with images."""
+        # Normalize content to use (Image N) placeholders
+        content = re.sub(r"\[Image (\d+)\]", r"(Image \1)", content)
+        pattern = r"(?:\n|^)\s*\(Image (\d+)\)\s*(?:\n|$)"
+        parts = re.split(pattern, content, flags=re.MULTILINE)
+        for i in range(len(parts)):
+            if i % 2 == 0:  # Text part
+                part = parts[i].strip()
+                if part:
+                    st.markdown(part)
+            else:  # Image number
+                num = parts[i]
+                if image_map and num in image_map:
+                    # Find image with matching ID
+                    img_id = image_map.get(num)
+                    for idx, img in enumerate(images):
+                        if img.get("id") == img_id:
+                            caption = img.get("caption", "")
+                            cleaned_caption = re.sub(r"^Figure\s*\d+:\s*", "", caption)
+                            prefixed_caption = f"Image {num}: {cleaned_caption}" if cleaned_caption.strip() else f"Image {num}:"
+                            st.image(
+                                base64.b64decode(img["base64"]),
+                                caption=prefixed_caption,
+                                use_container_width=True,
+                                output_format="auto",
+                                clamp=True,
+                                channels="RGB",
+                            )
+                            break
+                else:
+                    # Fallback for legacy messages
+                    img_idx = int(num) - 1
+                    if 0 <= img_idx < len(images):
+                        caption = images[img_idx].get("caption", "")
+                        cleaned_caption = re.sub(r"^Figure\s*\d+:\s*", "", caption)
+                        prefixed_caption = f"Image {num}: {cleaned_caption}" if cleaned_caption.strip() else f"Image {num}:"
+                        st.image(
+                            base64.b64decode(images[img_idx]["base64"]),
+                            caption=prefixed_caption,
+                            use_container_width=True,
+                            output_format="auto",
+                            clamp=True,
+                            channels="RGB",
+                        )
 
     # Render chat history in the persistent container
     st.markdown('<div class="chat-messages">', unsafe_allow_html=True)
@@ -250,40 +296,16 @@ def render_chat_content() -> None:
             if has_tool_calls:
                 continue
             with st.chat_message("assistant"):
-                content = msg.content
+                content = str(msg.content)
                 images = msg.additional_kwargs.get("images", [])
+                image_map = msg.additional_kwargs.get("image_map", None)
                 videos = msg.additional_kwargs.get("videos", [])
 
-                segments = re.findall(r"((?:[0-9]+\.\s+[^\n]*?(?=(?:[0-9]+\.\s+|\Z)))|[^\n]+)", content, re.DOTALL)
-                for segment in segments:
-                    segment = segment.strip()
-                    if not segment:
-                        continue
-
-                    image_refs = re.findall(r"\[Image (\d+)\]", segment)
-                    cleaned_segment = re.sub(r"\[Image (\d+)\]\s*", "", segment)
-                    cleaned_segment = re.sub(r"\s+([.!?])", r"\1", cleaned_segment)
-                    if cleaned_segment.strip():
-                        st.markdown(cleaned_segment)
-
-                    for ref in image_refs:
-                        idx = int(ref) - 1
-                        if 0 <= idx < len(images):
-                            caption = images[idx].get("caption", "")
-                            cleaned_caption = re.sub(r"^Figure \d+:\s*", "", caption)
-                            st.image(
-                                base64.b64decode(images[idx]["base64"]),
-                                caption=cleaned_caption if cleaned_caption.strip() else None,
-                                use_container_width=True,
-                                output_format="auto",
-                                clamp=True,
-                                channels="RGB",
-                            )
+                render_message_content(content, images, image_map)
 
                 for video in videos:
                     st.markdown(f"**Video**: [{video['title']}]({video['url']})")
                     st.video(video["url"])
-
                 
                 message_id = msg.additional_kwargs.get("message_id")
                 if message_id:
@@ -366,7 +388,7 @@ def render_chat_content() -> None:
 
                     stream_container = st.empty()
                     with stream_container:
-                        full_content = stream_container.write_stream(stream_tokens())
+                        stream_container.write_stream(stream_tokens())
 
                     final_state = st.session_state.graph.get_state(config).values
                     st.session_state.images = final_state.get("images", [])
@@ -377,37 +399,16 @@ def render_chat_content() -> None:
                         if ai_messages:
                             final_message = ai_messages[-1]
                             images = final_message.additional_kwargs.get("images", [])
+                            image_map = final_message.additional_kwargs.get("image_map", None)
                             videos = final_message.additional_kwargs.get("videos", [])
 
                             stream_container.empty()
-                            pattern = r"(?:\n|^)\s*\(Image (\d+)\)\s*(?:\n|$)"
-                            parts = re.split(pattern, final_message.content, flags=re.MULTILINE)
-                            for i in range(len(parts)):
-                                if i % 2 == 0:  # Text part
-                                    part = parts[i].strip()
-                                    if part:
-                                        st.markdown(part)
-                                else:  # Image number
-                                    img_idx = int(parts[i]) - 1
-                                    if 0 <= img_idx < len(images):
-                                        caption = images[img_idx].get("caption", "")
-                                        cleaned_caption = re.sub(r"^Figure\s*\d+:\s*", "", caption)
-                                        prefixed_caption = f"Image {parts[i]}: {cleaned_caption}" if cleaned_caption.strip() else f"Image {parts[i]}:"
-                                        st.image(
-                                            base64.b64decode(images[img_idx]["base64"]),
-                                            caption=prefixed_caption,
-                                            use_container_width=True,
-                                            output_format="auto",
-                                            clamp=True,
-                                            channels="RGB",
-                                        )
+                            render_message_content(final_message.content, images, image_map)
 
-                            # Render video links
                             for video in videos:
                                 st.markdown(f"**Video**: [{video['title']}]({video['url']})")
                                 st.video(video["url"])
 
-                            # Feedback
                             response_message_id = final_message.additional_kwargs.get("message_id")
                             if response_message_id:
                                 feedback_key = f"feedback_{response_message_id}_{st.session_state.thread_id}"
@@ -424,7 +425,6 @@ def render_chat_content() -> None:
                                         database.update_message_feedback(response_message_id, 0)
                                         final_message.additional_kwargs["feedback"] = 0
 
-                    # Display latency details
                     with st.expander("Latency Details", expanded=True):
                         timings = final_state.get("timings", [])
                         total_latency = sum(timing["time"] for timing in timings)

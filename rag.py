@@ -109,6 +109,7 @@ def build_graph(llm, vector_store, k) -> StateGraph:
                     )
                     image_map = {
                         f"db://images/{img[0]}": {
+                            "id": img[0],
                             "base64": base64.b64encode(img[1]).decode("utf-8"),
                             "caption": img[2],
                         }
@@ -289,6 +290,10 @@ def build_graph(llm, vector_store, k) -> StateGraph:
                 images.extend(msg.artifact.get("images", []))
                 videos.extend(msg.artifact.get("videos", []))
 
+        image_info = "\n".join(
+            f"Image ID:{img['id']}: {img['caption'] or 'No caption'}"
+            for img in images
+        ) if images else "No images available."
         system_message_content = (
             "You are a polite and helpful assistant providing information to MissionOS users. "
             "The user's query is provided in the messages that follow this instruction. "
@@ -311,7 +316,7 @@ def build_graph(llm, vector_store, k) -> StateGraph:
             "Avoid trailing punctuation after placeholders. "
             "If you don't know the answer, say so clearly.\n\n"
             f"Context:\n{retrieved_content}\n\n"
-            f"Available images: {len(images)} image(s)\n"
+            f"Available images:\n{image_info}\n\n"
             f"Available videos: {len(videos)} video(s)"
         )
 
@@ -330,10 +335,40 @@ def build_graph(llm, vector_store, k) -> StateGraph:
             accumulated_content += chunk.content
             yield new_state
 
+        placeholder_nums = []
+        seen_nums = set()
+        for match in re.finditer(r"\(Image (\d+)\)", accumulated_content):
+            num = match.group(1)
+            if num not in seen_nums:
+                placeholder_nums.append(num)
+                seen_nums.add(num)
+
+        image_map = {}
+        ordered_images = [None] * len(placeholder_nums)
+        remaining_images = images.copy()
+        used_image_ids = set()
+
+        for num in placeholder_nums:
+            if not remaining_images:
+                break
+            img = remaining_images.pop(0)
+            image_map[num] = img["id"]
+            ordered_images[int(num) - 1] = img
+            used_image_ids.add(img["id"])
+
+        for img in remaining_images:
+            if img["id"] not in used_image_ids:
+                ordered_images.append(img)
+                image_map[str(len(image_map) + 1)] = img["id"]
+
         generate_time = time.time() - start_time
         final_response = AIMessage(
             content=accumulated_content,
-            additional_kwargs={"images": images, "videos": videos}
+            additional_kwargs={
+                "images": ordered_images,
+                "videos": videos,
+                "image_map": image_map
+            }
         )
         response_message_id = database.add_message_to_db(
             thread_id=thread_id,
@@ -359,7 +394,7 @@ def build_graph(llm, vector_store, k) -> StateGraph:
 
         new_state = state.copy()
         new_state["messages"] = new_state["messages"] + [final_response]
-        new_state["images"] = images
+        new_state["images"] = ordered_images
         new_state["videos"] = videos
         new_state["timings"].extend(
             [
