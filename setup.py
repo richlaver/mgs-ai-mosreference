@@ -220,7 +220,7 @@ def run_batch_test(test_csv, graph, vector_store):
 
     expected_timings = {
         "search": 0.0,
-        "image_fetch": 0.0,
+        # "image_fetch": 0.0,
         "llm_decision": 0.0,
         "tool_execution": 0.0,
         "llm_generation": 0.0

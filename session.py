@@ -60,3 +60,7 @@ def setup_session() -> None:
         st.session_state.selected_user_id = None
     if "persistence_setup_complete" not in st.session_state:
         st.session_state.persistence_setup_complete = False
+    if "image_cache" not in st.session_state:
+        st.session_state.image_cache = {}
+    if "timings" not in st.session_state:
+        st.session_state.timings = []

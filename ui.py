@@ -10,6 +10,7 @@ import logging
 import uuid
 import re
 import json
+import time
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
@@ -238,9 +239,32 @@ def render_chat_content() -> None:
     if not st.session_state.get("setup_complete", False):
         return
     
-    def render_message_content(content, images, image_map=None):
-        """Helper to render message content with images."""
-        # Normalize content to use (Image N) placeholders
+    def render_message_content(content, image_map=None):
+        """Helper to render message content with images fetched dynamically."""
+        if not image_map:
+            image_map = {}
+
+        image_ids = list(set(image_map.values()))
+
+        if image_ids:
+            missing_ids = [id for id in image_ids if id not in st.session_state.image_cache]
+            if missing_ids:
+                try:
+                    start_time = time.time()
+                    fetched_images = database.get_images_by_ids(missing_ids)
+                    image_fetch_time = time.time() - start_time
+                    st.session_state.timings.append({
+                        "node": "render_message_content",
+                        "time": image_fetch_time,
+                        "component": "image_fetch"
+                    })
+                    st.write(len(st.session_state.image_cache))
+                    for img in fetched_images:
+                        st.session_state.image_cache[img["id"]] = img
+                except Exception as e:
+                    logger.error(f"Error fetching images: {e}")
+                    st.warning("Some images could not be loaded.")
+
         content = re.sub(r"\[Image (\d+)\]", r"(Image \1)", content)
         pattern = r"(?:\n|^)\s*\(Image (\d+)\)\s*(?:\n|$)"
         parts = re.split(pattern, content, flags=re.MULTILINE)
@@ -251,40 +275,27 @@ def render_chat_content() -> None:
                     st.markdown(part)
             else:  # Image number
                 num = parts[i]
-                if image_map and num in image_map:
-                    # Find image with matching ID
-                    img_id = image_map.get(num)
-                    for idx, img in enumerate(images):
-                        if img.get("id") == img_id:
-                            caption = img.get("caption", "")
-                            cleaned_caption = re.sub(r"^Figure\s*\d+:\s*", "", caption)
-                            prefixed_caption = f"Image {num}: {cleaned_caption}" if cleaned_caption.strip() else f"Image {num}:"
-                            st.image(
-                                base64.b64decode(img["base64"]),
-                                caption=prefixed_caption,
-                                use_container_width=True,
-                                output_format="auto",
-                                clamp=True,
-                                channels="RGB",
-                            )
-                            break
-                else:
-                    # Fallback for legacy messages
-                    img_idx = int(num) - 1
-                    if 0 <= img_idx < len(images):
-                        caption = images[img_idx].get("caption", "")
-                        cleaned_caption = re.sub(r"^Figure\s*\d+:\s*", "", caption)
-                        prefixed_caption = f"Image {num}: {cleaned_caption}" if cleaned_caption.strip() else f"Image {num}:"
+                img_id = image_map.get(num)
+                if img_id and img_id in st.session_state.image_cache:
+                    img = st.session_state.image_cache[img_id]
+                    caption = img.get("caption", "")
+                    cleaned_caption = re.sub(r"^Figure\s*\d+:\s*", "", caption)
+                    prefixed_caption = f"Image {num}: {cleaned_caption}" if cleaned_caption.strip() else f"Image {num}:"
+                    try:
                         st.image(
-                            base64.b64decode(images[img_idx]["base64"]),
+                            base64.b64decode(img["base64"]),
                             caption=prefixed_caption,
                             use_container_width=True,
                             output_format="auto",
                             clamp=True,
                             channels="RGB",
                         )
+                    except Exception as e:
+                        logger.error(f"Error rendering image {img_id}: {e}")
+                        st.warning(f"Image {num} could not be displayed.")
+                else:
+                    st.warning(f"Image {num} not found.")
 
-    # Render chat history in the persistent container
     st.markdown('<div class="chat-messages">', unsafe_allow_html=True)
     for msg in st.session_state.get('messages', []):
         if isinstance(msg, HumanMessage):
@@ -297,11 +308,10 @@ def render_chat_content() -> None:
                 continue
             with st.chat_message("assistant"):
                 content = str(msg.content)
-                images = msg.additional_kwargs.get("images", [])
                 image_map = msg.additional_kwargs.get("image_map", None)
                 videos = msg.additional_kwargs.get("videos", [])
 
-                render_message_content(content, images, image_map)
+                render_message_content(content, image_map)
 
                 for video in videos:
                     st.markdown(f"**Video**: [{video['title']}]({video['url']})")
@@ -337,7 +347,6 @@ def render_chat_content() -> None:
 
     if question := st.chat_input(
         placeholder="Ask a question about MissionOS:",
-        # disabled=not st.session_state.setup_complete,
         key="active_chat_input"
     ):
         st.session_state.images = []
@@ -391,19 +400,17 @@ def render_chat_content() -> None:
                         stream_container.write_stream(stream_tokens())
 
                     final_state = st.session_state.graph.get_state(config).values
-                    st.session_state.images = final_state.get("images", [])
                     st.session_state.videos = final_state.get("videos", [])
                     st.session_state.timings = final_state.get("timings", [])
                     if final_state:
                         ai_messages = [msg for msg in final_state.get("messages", []) if isinstance(msg, AIMessage) and not getattr(msg, "type", "") == "tool_call"]
                         if ai_messages:
                             final_message = ai_messages[-1]
-                            images = final_message.additional_kwargs.get("images", [])
                             image_map = final_message.additional_kwargs.get("image_map", None)
                             videos = final_message.additional_kwargs.get("videos", [])
 
                             stream_container.empty()
-                            render_message_content(final_message.content, images, image_map)
+                            render_message_content(final_message.content, image_map)
 
                             for video in videos:
                                 st.markdown(f"**Video**: [{video['title']}]({video['url']})")

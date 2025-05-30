@@ -82,6 +82,7 @@ def create_persistence_tables():
                     user_id INTEGER REFERENCES users(id),
                     content TEXT,
                     is_ai BOOLEAN,
+                    metadata JSONB,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     feedback INTEGER  -- -1 for thumbs-down, 1 for thumbs-up, 0 or NULL for no feedback
                 );
@@ -157,20 +158,42 @@ def get_user_threads(user_id: int) -> list:
 def get_thread_messages(thread_id: str, user_id: int) -> list:
     conn = connect_to_conversations_db()
     cursor = conn.cursor()
-    cursor.execute("""
-        SELECT id, content, is_ai, feedback
-        FROM messages
-        WHERE thread_id = %s AND user_id = %s
-        ORDER BY created_at ASC
-    """, (thread_id, user_id))
-    messages = [
-        AIMessage(content=row[1], additional_kwargs={"feedback": row[3] or 0, "message_id": row[0]}) if row[2]
-        else HumanMessage(content=row[1], additional_kwargs={"message_id": row[0]})
-        for row in cursor.fetchall()
-    ]
-    cursor.close()
-    conn.close()
-    return messages
+    try:
+        cursor.execute("""
+            SELECT id, content, is_ai, metadata, feedback
+            FROM messages
+            WHERE thread_id = %s AND user_id = %s
+            ORDER BY created_at ASC
+        """, (thread_id, user_id))
+        rows = cursor.fetchall()
+        messages = []
+        for row in rows:
+            message_id, content, is_ai, metadata_obj, feedback = row
+            metadata = metadata_obj if isinstance(metadata_obj, dict) else {}
+            if not isinstance(metadata, dict):
+                try:
+                    metadata = json.loads(metadata_obj) if metadata_obj else {}
+                except (json.JSONDecodeError, TypeError) as e:
+                    logger.error(f"Failed to parse metadata for message {message_id}: {e}")
+                    metadata = {}
+            metadata["feedback"] = feedback or 0
+            additional_kwargs = {
+                "image_map": metadata.get("image_map", {}),
+                "videos": metadata.get("videos", []),
+                "message_id": message_id,
+                "feedback": feedback or 0
+            }
+            if is_ai:
+                messages.append(AIMessage(content=content, additional_kwargs=additional_kwargs))
+            else:
+                messages.append(HumanMessage(content=content, additional_kwargs=additional_kwargs))
+        return messages
+    except Exception as e:
+        logger.error(f"Error retrieving thread messages for thread {thread_id}: {e}")
+        raise
+    finally:
+        cursor.close()
+        conn.close()
 
 
 def delete_thread(thread_id: str, user_id: int):
@@ -225,7 +248,8 @@ def add_message_to_db(
     user_id: int,
     content: str,
     is_ai: bool,
-    feedback: Optional[int] = None
+    feedback: Optional[int] = None,
+    additional_kwargs: Optional[dict] = None
 ) -> Optional[int]:
     """Adds a message to the database.
 
@@ -245,13 +269,18 @@ def add_message_to_db(
     try:
         conn = connect_to_conversations_db()
         with conn.cursor() as cursor:
+            metadata = {
+                "image_map": additional_kwargs.get("image_map", {}) if additional_kwargs else {},
+                "videos": additional_kwargs.get("videos", []) if additional_kwargs else [],
+                "feedback": additional_kwargs.get("feedback", 0) if additional_kwargs else 0
+            }
             cursor.execute(
                 """
-                INSERT INTO messages (thread_id, user_id, content, is_ai, feedback)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO messages (thread_id, user_id, content, is_ai, metadata, feedback)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 RETURNING id;
                 """,
-                (thread_id, user_id, content, is_ai, feedback)
+                (thread_id, user_id, content, is_ai, json.dumps(metadata), feedback)
             )
             result = cursor.fetchone()
             if result:
@@ -380,12 +409,40 @@ def create_images_table() -> None:
             );
             """
         )
+        cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_images_id ON images (id);
+            """)
         cursor.execute("GRANT ALL PRIVILEGES ON images TO postgres;")
         conn.commit()
         st.toast("Images table recreated successfully.", icon=":material/database:")
     finally:
         cursor.close()
         conn.close()
+
+
+def get_images_by_ids(image_ids):
+    """Retrieves images from the database by their IDs.
+    Args:
+        image_ids: List of image IDs to retrieve.
+    Returns:
+        List of dictionaries containing image ID, base64 encoded image data, and caption.
+    """
+    conn = connect_to_images_db()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, image_binary, caption FROM images WHERE id = ANY(%s)",
+        (image_ids,)
+    )
+    rows = cursor.fetchall()
+    images = []
+    for row in rows:
+        id, image_binary, caption = row
+        images.append({
+            "id": id,
+            "base64": base64.b64encode(image_binary).decode("utf-8"),
+            "caption": caption
+        })
+    return images
 
 
 def generate_webpaths() -> List[str]:

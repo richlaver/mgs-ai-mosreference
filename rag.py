@@ -4,7 +4,6 @@ This module defines the retrieval-augmented generation pipeline, integrating the
 language model and vector store.
 """
 
-import base64
 import csv
 import logging
 import re
@@ -97,39 +96,12 @@ def build_graph(llm, vector_store, k) -> StateGraph:
             image_ids.extend(int(id) for id in re.findall(r"db://images/(\d+)", doc.page_content))
 
         videos = [{"url": url, "title": title} for url, title in videos_set]
-        start_image_fetch = time.time()
-        images = []
-        with database.connect_to_images_db() as conn:
-            cursor = conn.cursor()
-            try:
-                if image_ids:
-                    cursor.execute(
-                        "SELECT id, image_binary, caption FROM images WHERE id = ANY(%s)",
-                        (image_ids,),
-                    )
-                    image_map = {
-                        f"db://images/{img[0]}": {
-                            "id": img[0],
-                            "base64": base64.b64encode(img[1]).decode("utf-8"),
-                            "caption": img[2],
-                        }
-                        for img in cursor.fetchall()
-                    }
-                    for doc in retrieved_docs:
-                        for img_ref, img_data in image_map.items():
-                            if img_ref in doc.page_content or (
-                                img_data["caption"] and img_data["caption"] in doc.page_content
-                            ):
-                                images.append(img_data)
-                image_fetch_time = time.time() - start_image_fetch
-            finally:
-                cursor.close()
 
         artifact = {
             "docs": retrieved_docs,
-            "images": images,
+            "image_ids": image_ids,
             "videos": videos,
-            "timings": {"search": search_time, "image_fetch": image_fetch_time},
+            "timings": {"search": search_time}
         }
         return serialized_docs, artifact
     
@@ -192,7 +164,6 @@ def build_graph(llm, vector_store, k) -> StateGraph:
                 content=response.content,
                 is_ai=True
             )
-            response.additional_kwargs["message_id"] = response_message_id
 
         new_state = state.copy()
         new_state["messages"].append(response)
@@ -283,17 +254,16 @@ def build_graph(llm, vector_store, k) -> StateGraph:
                 writer.writerow(row)
 
         retrieved_content = "\n\n".join(msg.content for msg in tool_messages if msg.content)
-        images = []
+        image_ids = []
         videos = []
         for msg in tool_messages:
             if hasattr(msg, "artifact") and msg.artifact:
-                images.extend(msg.artifact.get("images", []))
+                image_ids.extend(msg.artifact.get("image_ids", []))
                 videos.extend(msg.artifact.get("videos", []))
 
         image_info = "\n".join(
-            f"Image ID:{img['id']}: {img['caption'] or 'No caption'}"
-            for img in images
-        ) if images else "No images available."
+            f"Image ID: {id}" for id in image_ids
+        ) if image_ids else "No images available."
         system_message_content = (
             "You are a polite and helpful assistant providing information to MissionOS users. "
             "The user's query is provided in the messages that follow this instruction. "
@@ -344,28 +314,14 @@ def build_graph(llm, vector_store, k) -> StateGraph:
                 seen_nums.add(num)
 
         image_map = {}
-        ordered_images = [None] * len(placeholder_nums)
-        remaining_images = images.copy()
-        used_image_ids = set()
-
-        for num in placeholder_nums:
-            if not remaining_images:
-                break
-            img = remaining_images.pop(0)
-            image_map[num] = img["id"]
-            ordered_images[int(num) - 1] = img
-            used_image_ids.add(img["id"])
-
-        for img in remaining_images:
-            if img["id"] not in used_image_ids:
-                ordered_images.append(img)
-                image_map[str(len(image_map) + 1)] = img["id"]
+        for i, num in enumerate(placeholder_nums):
+            if i < len(image_ids):
+                image_map[num] = image_ids[i]
 
         generate_time = time.time() - start_time
         final_response = AIMessage(
             content=accumulated_content,
             additional_kwargs={
-                "images": ordered_images,
                 "videos": videos,
                 "image_map": image_map
             }
@@ -374,9 +330,9 @@ def build_graph(llm, vector_store, k) -> StateGraph:
             thread_id=thread_id,
             user_id=user_id,
             content=accumulated_content,
-            is_ai=True
+            is_ai=True,
+            additional_kwargs=final_response.additional_kwargs
         )
-        final_response.additional_kwargs["message_id"] = response_message_id
         database.add_message_timings_to_db(
             message_id=response_message_id,
             timings=[
@@ -394,7 +350,6 @@ def build_graph(llm, vector_store, k) -> StateGraph:
 
         new_state = state.copy()
         new_state["messages"] = new_state["messages"] + [final_response]
-        new_state["images"] = ordered_images
         new_state["videos"] = videos
         new_state["timings"].extend(
             [
