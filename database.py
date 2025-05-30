@@ -176,7 +176,6 @@ def get_thread_messages(thread_id: str, user_id: int) -> list:
                 except (json.JSONDecodeError, TypeError) as e:
                     logger.error(f"Failed to parse metadata for message {message_id}: {e}")
                     metadata = {}
-            metadata["feedback"] = feedback or 0
             additional_kwargs = {
                 "image_map": metadata.get("image_map", {}),
                 "videos": metadata.get("videos", []),
@@ -271,9 +270,9 @@ def add_message_to_db(
         with conn.cursor() as cursor:
             metadata = {
                 "image_map": additional_kwargs.get("image_map", {}) if additional_kwargs else {},
-                "videos": additional_kwargs.get("videos", []) if additional_kwargs else [],
-                "feedback": additional_kwargs.get("feedback", 0) if additional_kwargs else 0
+                "videos": additional_kwargs.get("videos", []) if additional_kwargs else []
             }
+            feedback = additional_kwargs.get("feedback", feedback) if additional_kwargs else feedback
             cursor.execute(
                 """
                 INSERT INTO messages (thread_id, user_id, content, is_ai, metadata, feedback)

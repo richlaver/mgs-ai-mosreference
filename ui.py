@@ -258,7 +258,6 @@ def render_chat_content() -> None:
                         "time": image_fetch_time,
                         "component": "image_fetch"
                     })
-                    st.write(len(st.session_state.image_cache))
                     for img in fetched_images:
                         st.session_state.image_cache[img["id"]] = img
                 except Exception as e:

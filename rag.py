@@ -164,6 +164,7 @@ def build_graph(llm, vector_store, k) -> StateGraph:
                 content=response.content,
                 is_ai=True
             )
+        response.additional_kwargs["message_id"] = response_message_id
 
         new_state = state.copy()
         new_state["messages"].append(response)
@@ -333,6 +334,7 @@ def build_graph(llm, vector_store, k) -> StateGraph:
             is_ai=True,
             additional_kwargs=final_response.additional_kwargs
         )
+        final_response.additional_kwargs["message_id"] = response_message_id
         database.add_message_timings_to_db(
             message_id=response_message_id,
             timings=[
