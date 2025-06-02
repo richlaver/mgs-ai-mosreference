@@ -164,7 +164,7 @@ def build_graph(llm, vector_store, k) -> StateGraph:
                 content=response.content,
                 is_ai=True
             )
-        response.additional_kwargs["message_id"] = response_message_id
+            response.additional_kwargs["message_id"] = response_message_id
 
         new_state = state.copy()
         new_state["messages"].append(response)
