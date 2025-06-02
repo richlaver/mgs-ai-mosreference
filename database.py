@@ -144,12 +144,12 @@ def get_user_threads(user_id: int) -> list:
     conn = connect_to_conversations_db()
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT id, title, created_at
+        SELECT id, title, created_at, updated_at
         FROM threads
         WHERE user_id = %s AND is_archived = FALSE
         ORDER BY updated_at DESC
     """, (user_id,))
-    threads = [{"id": str(row[0]), "title": row[1], "created_at": row[2]} for row in cursor.fetchall()]
+    threads = [{"id": str(row[0]), "title": row[1], "created_at": row[2], "updated_at": row[3]} for row in cursor.fetchall()]
     cursor.close()
     conn.close()
     return threads
@@ -284,6 +284,14 @@ def add_message_to_db(
             result = cursor.fetchone()
             if result:
                 message_id = result[0]
+                cursor.execute(
+                    """
+                        UPDATE threads
+                        SET updated_at = CURRENT_TIMESTAMP
+                        WHERE id = %s;
+                    """,
+                    (thread_id,)
+                )
             else:
                 return None
         conn.commit()

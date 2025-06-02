@@ -8,6 +8,8 @@ import streamlit as st
 import logging
 import database
 import uuid
+import pytz
+from streamlit_js import st_js_blocking
 
 # Configure logging
 logging.basicConfig(
@@ -64,3 +66,23 @@ def setup_session() -> None:
         st.session_state.image_cache = {}
     if "timings" not in st.session_state:
         st.session_state.timings = []
+
+    if "user_timezone" not in st.session_state:
+        try:
+            timezone = st_js_blocking(
+                code="""return Intl.DateTimeFormat().resolvedOptions().timeZone"""
+            )
+            if timezone and isinstance(timezone, str):
+                pytz.timezone(timezone)
+                st.session_state.user_timezone = timezone
+            else:
+                st.session_state.user_timezone = "UTC"
+                st.warning("Failed to detect timezone; using UTC. Please ensure JavaScript is enabled.")
+        except pytz.exceptions.UnknownTimeZoneError:
+            logger.warning(f"Invalid timezone detected: {timezone}, falling back to UTC")
+            st.session_state.user_timezone = "UTC"
+            st.warning("Failed to detect timezone; using UTC. Please ensure JavaScript is enabled.")
+        except Exception as e:
+            logger.error(f"Error detecting timezone: {e}")
+            st.session_state.user_timezone = "UTC"
+            st.warning("Failed to detect timezone; using UTC. Please ensure JavaScript is enabled.")

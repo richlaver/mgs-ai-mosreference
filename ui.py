@@ -5,11 +5,11 @@ user input, multimedia rendering, and new UI components (sidebar, modals).
 """
 
 import database
+from datetime import datetime, date
 import base64
 import logging
 import uuid
 import re
-import json
 import time
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -17,6 +17,7 @@ import matplotlib.cm as cm
 import streamlit as st
 from langchain_core.messages import AIMessage, HumanMessage
 from streamlit_extras.stylable_container import stylable_container
+import pytz
 
 
 # Configure logging for UI events and errors
@@ -26,6 +27,39 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(), logging.FileHandler("ui_debug.log")]
 )
 logger = logging.getLogger(__name__)
+
+
+def format_timestamp(updated_at: datetime) -> str:
+    """Formats the updated_at timestamp according to specified logic.
+
+    Args:
+        updated_at: The datetime object from the threads table (assumed UTC).
+
+    Returns:
+        Formatted string for display (e.g., 'Today 3:33pm', 'Yesterday 8:45am', 'Mon 12:54pm', '28 May', '22 Dec 2024').
+    """
+    user_timezone = pytz.timezone(st.session_state.user_timezone)
+    local_time = updated_at.replace(tzinfo=pytz.UTC).astimezone(user_timezone)
+    today = date.today()
+    timestamp_date = local_time.date()
+    delta_days = (today - timestamp_date).days
+
+    time_str = local_time.strftime('%I:%M%p').lower().lstrip('0')
+    if time_str.startswith(':'):
+        time_str = local_time.strftime('%I:%M%p').lower()
+
+    if delta_days == 0:
+        return f"Today {time_str}"
+    elif delta_days == 1:
+        return f"Yesterday {time_str}"
+    elif delta_days <= 6:
+        day_str = local_time.strftime('%a')
+        day_str = day_str[0].upper() + day_str[1:]
+        return f"{day_str} {time_str}"
+    elif timestamp_date.year == today.year:
+        return local_time.strftime('%d %b').lstrip('0')
+    else:
+        return local_time.strftime('%d %b %Y').lstrip('0')
 
 
 def clear_chat() -> None:
@@ -189,6 +223,7 @@ def render_initial_ui() -> None:
             ):
                 cols = st.columns([3, 1, 1])
                 cols[0].markdown(thread["title"], unsafe_allow_html=False)
+                cols[0].caption(format_timestamp(thread["updated_at"]))
                 if cols[1].button(label="", icon=":material/open_in_new:", key=f"open_convo_{i}", help="Open conversation"):
                     with st.spinner("Loading conversation..."):
                         st.session_state.thread_id = thread["id"]

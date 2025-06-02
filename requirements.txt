@@ -1,5 +1,6 @@
 streamlit
 streamlit-extras
+streamlit-js
 langchain_core
 typing_extensions
 beautifulsoup4
@@ -15,4 +16,5 @@ playwright
 pandas
 pg8000
 psycopg2-binary
+pytz
 cloud-sql-python-connector[pg8000]
