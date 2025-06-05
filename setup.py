@@ -235,7 +235,13 @@ def run_batch_test(test_csv, graph, vector_store):
     status_message = st.toast(f"Processing batch test: 0%", icon=":material/build:")
     for i, ((query_id, query_text), group) in enumerate(grouped):
         ground_truth_ids = set(group['point_id'].astype(str))
-        config = {"configurable": {"thread_id": f"test_query_{query_id}"}}
+        config = {
+            "configurable":
+            {
+                "thread_id": f"test_query_{query_id}",
+                "user_id": st.session_state.selected_user_id
+            }
+        }
         initial_state = {
             "messages": [
                 HumanMessage(content=query_text),

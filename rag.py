@@ -17,6 +17,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
 import time
+import uuid
 
 import database
 from classes import State
@@ -138,26 +139,27 @@ def build_graph(llm, vector_store, k) -> StateGraph:
         )
         response_time = time.time() - start_time
 
-        database.add_thread_to_db(
-            thread_id=thread_id,
-            user_id=user_id,
-            title=generate_thread_title(
-                query=state["messages"][-1].content,
-                response=response.content,
-                llm=llm
-            ),
-        )
-        query_message_id = database.add_message_to_db(
-            thread_id=thread_id,
-            user_id=user_id,
-            content=state["messages"][-1].content,
-            is_ai=False
-        )
-        state["messages"][-1].additional_kwargs["message_id"] = query_message_id
+        if isinstance(thread_id, uuid.UUID): # thread_id is not a UUID for batch tests
+            database.add_thread_to_db(
+                thread_id=thread_id,
+                user_id=user_id,
+                title=generate_thread_title(
+                    query=state["messages"][-1].content,
+                    response=response.content,
+                    llm=llm
+                ),
+            )
+            query_message_id = database.add_message_to_db(
+                thread_id=thread_id,
+                user_id=user_id,
+                content=state["messages"][-1].content,
+                is_ai=False
+            )
+            state["messages"][-1].additional_kwargs["message_id"] = query_message_id
 
         has_tool_calls = (hasattr(response, "tool_calls") and bool(response.tool_calls)) or \
                      (hasattr(response, "invalid_tool_calls") and bool(response.invalid_tool_calls))
-        if not has_tool_calls:
+        if not has_tool_calls and isinstance(thread_id, uuid.UUID): # thread_id is not a UUID for batch tests:
             response_message_id = database.add_message_to_db(
                 thread_id=thread_id,
                 user_id=user_id,
@@ -327,28 +329,29 @@ def build_graph(llm, vector_store, k) -> StateGraph:
                 "image_map": image_map
             }
         )
-        response_message_id = database.add_message_to_db(
-            thread_id=thread_id,
-            user_id=user_id,
-            content=accumulated_content,
-            is_ai=True,
-            additional_kwargs=final_response.additional_kwargs
-        )
-        final_response.additional_kwargs["message_id"] = response_message_id
-        database.add_message_timings_to_db(
-            message_id=response_message_id,
-            timings=[
-                {"node": "generate", "time": generate_time, "component": "llm_generation"},
-                *[
-                    {"node": "retrieve", "time": time_val, "component": component}
-                    for component, time_val in (
-                        tool_messages[-1].artifact.get("timings", {})
-                        if tool_messages and hasattr(tool_messages[-1], "artifact") and tool_messages[-1].artifact
-                        else {}
-                    ).items()
-                ],
-            ]
-        )
+        if isinstance(thread_id, uuid.UUID): # thread_id is not a UUID for batch tests
+            response_message_id = database.add_message_to_db(
+                thread_id=thread_id,
+                user_id=user_id,
+                content=accumulated_content,
+                is_ai=True,
+                additional_kwargs=final_response.additional_kwargs
+            )
+            final_response.additional_kwargs["message_id"] = response_message_id
+            database.add_message_timings_to_db(
+                message_id=response_message_id,
+                timings=[
+                    {"node": "generate", "time": generate_time, "component": "llm_generation"},
+                    *[
+                        {"node": "retrieve", "time": time_val, "component": component}
+                        for component, time_val in (
+                            tool_messages[-1].artifact.get("timings", {})
+                            if tool_messages and hasattr(tool_messages[-1], "artifact") and tool_messages[-1].artifact
+                            else {}
+                        ).items()
+                    ],
+                ]
+            )
 
         new_state = state.copy()
         new_state["messages"] = new_state["messages"] + [final_response]
